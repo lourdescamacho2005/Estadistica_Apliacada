@@ -1,0 +1,1098 @@
+---
+title: "Análisis Exploratorio de Datos (EDA)"
+subtitle: "Datos del CPV 2020 - Ciudad de México"
+format: 
+  html:
+    grid: 
+      body-width: 950px
+lang: es
+---
+
+```{r}
+#| code-fold: true
+#| warning: false
+#| message: false
+
+library(tidyverse)
+library(sf)          # Para datos espaciales
+library(viridis)     # Para paletas de colores
+library(janitor)     # Para limpiar nombres de columnas
+library(scales)      # Para mejorar ejes en gráficos
+
+```
+
+# Objetivo
+
+El objetivo de este documento es realizar un análisis exploratorio de datos (EDA) utilizando técnicas de estadística descriptiva y visualización gráfica. Nos enfocaremos en variables cuantitativas, una a la vez, aplicando diversas representaciones gráficas para comprender mejor la distribución y características de los datos.
+
+Uno de los primeros temas que exploraremos en la estadística inferencial será la estimación de parámetros, por lo que es fundamental entender cómo se comportan las variables en una muestra.
+
+# Datos espaciales de la Ciudad de México
+
+La Ciudad de México no tiene municipios, sino 16 alcaldías. En los archivos del INEGI las alcaldías aparecen en las columnas de municipio, así que el código usa los mismos nombres de columnas.
+
+```{r municipios}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+
+municipios_cdmx <- st_read("data/09mun.shp", options = "ENCODING=LATIN1", quiet = TRUE)
+
+# Crear mapa de alcaldías de la Ciudad de México
+mapa_municipios <- ggplot(municipios_cdmx) +
+  geom_sf(fill = "maroon", color = "white", linewidth = 0.1) +
+  labs(
+    title = "Alcaldías de la Ciudad de México",
+    subtitle = paste("Total de alcaldías:", nrow(municipios_cdmx)),
+    caption = "Fuente: INEGI - Marco Geoestadístico"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    plot.caption = element_text(size = 10)
+  )
+
+print(mapa_municipios)
+```
+
+**¿Qué muestra?** Este mapa muestra cómo se divide la Ciudad de México en sus alcaldías. Nos sirve como base para los demás mapas del documento.
+
+# Fuente de datos: INEGI
+
+Para este ejemplo, utilizaremos los datos del **Instituto Nacional de Estadística y Geografía (INEGI)** de México. Específicamente, los Censos y Conteos de Población y Vivienda disponible en:
+
+**Enlace de descarga**: https://inegi.org.mx/app/descarga/
+
+Buscar: Estado (Ciudad de México). Seleccionar: Programas \> Censos y Conteos de Población y Vivienda \> 2020 \> Indicadores 1900-2020 y descargar el archivo CSV.
+
+Extraer el archivo `cpv_valor_09.csv` y guardarlo en la carpeta `data/`. Del Marco Geoestadístico, el archivo de alcaldías de la Ciudad de México es `09mun.shp` (con sus archivos `.dbf`, `.shx` y `.prj`).
+
+# Lectura de datos
+
+Carguemos los datos de población y vivienda para el año 2020, filtrando por algunos indicadores relevantes:
+
+- Edad mediana
+- Población total
+- Porcentaje de la población derechohabiente en el IMSS
+- Porcentaje de viviendas con electricidad
+- Porcentaje de viviendas particulares habitadas que disponen de Internet
+- Porcentaje de población de 12 años y más económicamente activa
+- Porcentaje de la población de 15 años y más con instrucción media superior
+
+```{r}
+#| code-fold: true
+#| warning: false
+#| message: false
+
+datos_total <- read_csv("data/cpv_valor_09.csv", na = c("ND"))
+
+datos_total <- datos_total |> filter(año == 2020)
+#unique(datos_total$indicador)
+datos_seleccion <- datos_total |>
+  filter(indicador %in% c("Edad mediana",
+                          "Población total",
+                          "Porcentaje de la población derechohabiente en el IMSS",
+                          "Porcentaje de viviendas con electricidad",
+                          "Porcentaje de viviendas particulares habitadas que disponen de Internet",
+                          "Porcentaje de población de 12 años y más económicamente activa",
+                          "Porcentaje de la población de 15 años y más con instrucción media superior"), desc_municipio != "Estatal") |>
+  mutate(valor = as.numeric(valor),                           # asegurar que el valor sea número
+         cve_municipio = as.numeric(cve_municipio) %% 1000) |> # clave de la alcaldía como número (2 a 17)
+  filter(cve_municipio != 0) |>                                # quitar el total del estado
+  select(cve_municipio, desc_municipio, indicador, valor)
+```
+
+Cambiamos el formato de los datos para que cada indicador sea una columna separada, facilitando el análisis posterior. Además, limpiamos los nombres de las columnas para que sean más manejables. Conservamos la clave de la alcaldía (`cve_municipio`) para unir los datos espaciales con los de población, porque es más seguro que unir por nombre.
+
+```{r}
+#| code-fold: true
+#| warning: false
+#| message: false
+
+datos <- datos_seleccion |>
+    pivot_wider(names_from = indicador, values_from = valor)
+
+datos <- datos |>
+  clean_names()
+```
+
+Los nombres de algunas variables (columnas) aún son muy extensos, por lo que es conveniente renombrarlas.
+
+```{r}
+#| code-fold: true
+
+datos <- datos |> 
+  rename(
+    electricidad = porcentaje_de_viviendas_con_electricidad,
+    media_superior = porcentaje_de_la_poblacion_de_15_anos_y_mas_con_instruccion_media_superior,
+    imss = porcentaje_de_la_poblacion_derechohabiente_en_el_imss,
+    pea = porcentaje_de_poblacion_de_12_anos_y_mas_economicamente_activa,
+    internet = porcentaje_de_viviendas_particulares_habitadas_que_disponen_de_internet
+  )
+
+names(datos)
+```
+
+
+# Estadísticas descriptivas
+
+Ahora que tenemos nuestros datos preparados, podemos realizar un resumen numérico de las variables cuantitativas. Para ello, utilizaremos la función `summary()` de R, que nos proporcionará un resumen estadístico de cada variable, incluyendo la media, mediana, mínimo, máximo y cuartiles. Hay que agregar las demás medidas de dispersión analizadas en clase (desviación media, varianza, rango, etc.) para cada variable cuantitativa.
+
+```{r}
+#| code-fold: true
+
+summary(datos)
+```
+
+Se unen los datos geográficos de las alcaldías de la Ciudad de México con los datos de población y vivienda. Esto nos permitirá crear mapas y realizar análisis espaciales. Para preservar la integridad de los datos, utilizamos `left_join()` de `dplyr`, el primer conjunto de datos debe ser el que contenga la columna `geometry`.
+
+```{r}
+#| code-fold: true
+
+# En el mapa la clave viene como texto ("001"), la convertimos a número para que coincida
+municipios_cdmx <- municipios_cdmx |>
+  mutate(cve_municipio = as.numeric(CVE_MUN))
+
+# En los datos del censo también la dejamos como número
+datos <- datos |>
+  mutate(cve_municipio = as.numeric(cve_municipio))
+
+datos <- left_join(municipios_cdmx, datos, by = "cve_municipio")
+```
+
+# Edad (Mediana)
+
+```{r}
+#| code-fold: true
+#| fig-width: 8
+#| fig-align: center
+
+
+ggplot(datos) +
+  geom_sf(aes(fill = edad_mediana), color = "white", linewidth = 0.05) +
+  scale_fill_viridis_c(
+    name = "Edad (mediana)"
+  ) +
+  labs(
+    title = "Edad (mediana) de las Alcaldías de la Ciudad de México",
+    caption = "Fuente: INEGI - CPV 2020"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    plot.caption = element_text(size = 10),
+    legend.position = "right"
+  )
+
+```
+
+**¿Qué muestra?** Este mapa colorea cada alcaldía según la edad mediana. Los colores oscuros (morados) indican valores bajos y los claros (amarillos) valores altos. Sirve para ver si los valores altos o bajos se concentran en alguna zona de la Ciudad de México. La edad mediana es la edad que divide a la población a la mitad: la mitad de las personas es más joven y la otra mitad es mayor.
+
+## Histograma
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(datos) +
+  geom_histogram(aes(edad_mediana), color="black", fill = "olivedrab", boundary=min(datos$edad_mediana, na.rm = TRUE), binwidth = 1) +
+  labs(
+    title = "Distribución de la Edad",
+    x = "Edad (años)", y = "Frecuencia"
+  ) +
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13)
+  )
+
+```
+
+**¿Qué muestra?** El histograma agrupa a las alcaldías en rangos de la edad mediana; cada barra es un rango. La altura de la barra indica cuántas alcaldías caen en ese rango, así que las barras más altas muestran los valores más comunes. Si la figura se carga hacia un lado, quiere decir que hay más alcaldías con valores bajos o con valores altos.
+
+## Gráfica de densidad
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(datos) +
+  geom_density(aes(edad_mediana), color="black", fill = "firebrick", alpha=0.6) +
+  labs(
+    title = "Distribución de la Edad",
+    x = "Edad (años)", y = "Densidad"
+  ) +
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13)
+  )
+
+
+```
+
+**¿Qué muestra?** La gráfica de densidad es como un histograma suavizado: en lugar de barras muestra una curva. Donde la curva está más alta es donde se concentran más alcaldías. Si tiene una sola "montaña", la mayoría tiene valores parecidos; si tiene varias, hay grupos distintos.
+
+## Boxplot
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(data = datos, aes(x = "", y = edad_mediana)) +
+    geom_boxplot(
+    fill = "#4A90E2",           # Color de relleno
+    color = "#2C5F7A",          # Color del borde más oscuro
+    alpha = 0.8,                # Transparencia
+    outlier.color = "#E74C3C",  # Color rojo para outliers
+    outlier.size = 2.5,         # Tamaño de outliers
+    outlier.alpha = 0.7,        # Transparencia de outliers
+    width = 0.5,                # Ancho del boxplot
+    notch = TRUE,               # Muescas para intervalo de confianza
+    notchwidth = 0.7            # Ancho de las muescas
+  ) +
+  geom_jitter(alpha = 0.3, color = "#34495E", size = 1.2, width = 0.1) +
+  scale_y_continuous(breaks = pretty_breaks(n = 8), labels = function(x) paste(x, "años")) +
+  labs(title = "Distribución de la Edad (mediana)", 
+  subtitle = "Población de la Ciudad de México",
+  y = "Edad (años)",
+  x = "")+
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+```
+
+**¿Qué muestra?** El diagrama de caja resume los datos en pocas partes. La línea del centro de la caja es la mediana, es decir, el valor de en medio. La caja contiene a la mitad de las alcaldías del centro: mientras más alargada, más diferentes son entre sí. Las líneas que salen de la caja (bigotes) llegan hasta los valores más lejanos que todavía se consideran normales, y los puntos rojos son valores atípicos, es decir, alcaldías muy distintas al resto. Los puntos grises representan a cada alcaldía.
+
+## Gráfico de violín
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(data = datos, aes(x = "", y = edad_mediana)) +
+    geom_violin(fill = "#4A90E2", color = "#2C5F7A", alpha = 0.8,
+    trim = FALSE,               # No recortar las colas
+    scale = "width", width = 0.8, linewidth = 0.8) +
+    geom_boxplot( width = 0.15, fill = "white", color = "#2C5F7A", alpha = 0.9,
+    outlier.color = "#E74C3C", outlier.size = 1.5, outlier.alpha = 0.8, notch = FALSE) +
+  stat_summary(fun = median, geom = "point", shape = 21, size = 3, fill = "white",
+  color = "#2C5F7A", stroke = 1.5) +
+  geom_jitter(alpha = 0.2, color = "#34495E", size = 0.8, width = 0.05) +
+  scale_y_continuous(breaks = pretty_breaks(n = 8), labels = function(x) paste(x, "años")) +
+  labs(title = "Distribución de la Edad (mediana)", 
+  subtitle = "Población de la Ciudad de México",
+  y = "Edad (años)",
+  x = "")+
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+  
+```
+
+**¿Qué muestra?** El gráfico de violín combina el diagrama de caja con la curva de densidad. Lo ancho del violín indica cuántos datos hay en ese valor: donde es más ancho, hay más alcaldías. En el centro se ve una caja pequeña y un círculo blanco que marca la mediana.
+
+## Q-Q Plot (comparación de cuantiles)
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+
+# Q-Q Plot básico para normalidad
+ggplot(data = datos, aes(sample = edad_mediana)) +
+    stat_qq(color = "#4A90E2", size = 2, alpha = 0.7) +
+    stat_qq_line(color = "#E74C3C", linewidth = 1, linetype = "dashed") +
+    scale_x_continuous(name = "Cuantiles Teóricos (Distribución Normal)",
+    breaks = pretty_breaks(n = 6)) +
+    scale_y_continuous(name = "Cuantiles Muestrales (Edad mediana)",
+    breaks = pretty_breaks(n = 6),
+    labels = function(x) paste(x, "años")) +
+    labs(title = "Gráfico Q-Q para Normalidad",
+    subtitle = "Edad Mediana - Población CDMX") +
+    theme_bw()+
+    theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+  
+
+
+```
+
+**¿Qué muestra?** El gráfico Q-Q sirve para ver si los datos se parecen a una distribución normal, la famosa forma de "campana". Si los puntos azules quedan sobre la línea roja punteada, los datos se comportan de forma normal. Si se separan, sobre todo en las orillas, quiere decir que hay valores más extremos de lo esperado o que los datos están cargados hacia un lado.
+
+## Dot Plot (Gráfico de puntos)
+
+Como la Ciudad de México solo tiene 16 alcaldías, mostramos todas.
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-height: 7
+#| fig-align: center
+
+ggplot(data = datos, aes(x = edad_mediana, y = reorder(NOMGEO, edad_mediana))) +
+  geom_point(color = "#4A90E2", size = 3, alpha = 0.8) +
+  geom_segment(aes(x = 0, xend = edad_mediana, y = NOMGEO, yend = NOMGEO),
+    color = "#BDC3C7", linewidth = 0.5, alpha = 0.7) +
+  scale_x_continuous(
+    name = "Edad (años)",
+    breaks = pretty_breaks(n = 6),
+    expand = expansion(mult = c(0, 0.1))) +
+  scale_y_discrete(
+    name = "Alcaldías",
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  labs(
+    title = "Dot Plot - Edad (mediana) por Alcaldía",
+    subtitle = "Ciudad de México") +
+  theme_bw()+
+    theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=8),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+  
+```
+
+**¿Qué muestra?** Esta gráfica muestra las 16 alcaldías ordenadas de menor a mayor edad mediana. Cada punto es una alcaldía y la línea gris ayuda a comparar su valor. Así podemos ver qué alcaldías tienen la población más joven y cuáles la de mayor edad.
+
+# Derechohabientes IMSS (%)
+
+```{r}
+#| code-fold: true
+#| fig-width: 8
+#| fig-align: center
+
+
+ggplot(datos) +
+  geom_sf(aes(fill = imss), color = "white", linewidth = 0.05) +
+  scale_fill_viridis_c(
+    name = "IMSS"
+  ) +
+  labs(
+    title = "Derechohabientes IMSS (%) de las Alcaldías de la Ciudad de México",
+    caption = "Fuente: INEGI - CPV 2020"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    plot.caption = element_text(size = 10),
+    legend.position = "right"
+  )
+
+```
+
+**¿Qué muestra?** Este mapa colorea cada alcaldía según el porcentaje de personas afiliadas al IMSS. Los colores oscuros (morados) indican valores bajos y los claros (amarillos) valores altos. Sirve para ver si los valores altos o bajos se concentran en alguna zona de la Ciudad de México.
+
+## Histograma
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(datos) +
+  geom_histogram(aes(imss), color="black", fill = "olivedrab", boundary=min(datos$imss, na.rm = TRUE), binwidth = 5) +
+  labs(
+    title = "Derechohabientes IMSS (%)",
+    x = "Derechohabientes (%)", y = "Frecuencia"
+  ) +
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13)
+  )
+
+```
+
+**¿Qué muestra?** El histograma agrupa a las alcaldías en rangos del porcentaje de personas afiliadas al IMSS; cada barra es un rango. La altura de la barra indica cuántas alcaldías caen en ese rango, así que las barras más altas muestran los valores más comunes. Si la figura se carga hacia un lado, quiere decir que hay más alcaldías con valores bajos o con valores altos.
+
+## Gráfica de densidad
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(datos) +
+  geom_density(aes(imss), color="black", fill = "#122ABB", alpha=0.6) +
+  labs(
+    title = "Derechohabientes IMSS (%)",
+    x = "Derechohabientes (%)", y = "Densidad"
+  ) +
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13)
+  )
+
+
+```
+
+**¿Qué muestra?** La gráfica de densidad es como un histograma suavizado: en lugar de barras muestra una curva. Donde la curva está más alta es donde se concentran más alcaldías. Si tiene una sola "montaña", la mayoría tiene valores parecidos; si tiene varias, hay grupos distintos.
+
+## Boxplot
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(data = datos, aes(x = "", y = imss)) +
+    geom_boxplot(
+    fill = "#4A90E2",           # Color de relleno
+    color = "#2C5F7A",          # Color del borde más oscuro
+    alpha = 0.8,                # Transparencia
+    outlier.color = "#E74C3C",  # Color rojo para outliers
+    outlier.size = 2.5,         # Tamaño de outliers
+    outlier.alpha = 0.7,        # Transparencia de outliers
+    width = 0.5,                # Ancho del boxplot
+    notch = TRUE,               # Muescas para intervalo de confianza
+    notchwidth = 0.7            # Ancho de las muescas
+  ) +
+  geom_jitter(alpha = 0.3, color = "#34495E", size = 1.2, width = 0.1) +
+  scale_y_continuous(breaks = pretty_breaks(n = 8), labels = function(x) paste(x, "%")) +
+  labs(title = "Derechohabientes IMSS (%)", 
+  subtitle = "Ciudad de México",
+  y = "Derechohabientes (%)",
+  x = "")+
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+```
+
+**¿Qué muestra?** El diagrama de caja resume los datos en pocas partes. La línea del centro de la caja es la mediana, es decir, el valor de en medio. La caja contiene a la mitad de las alcaldías del centro: mientras más alargada, más diferentes son entre sí. Las líneas que salen de la caja (bigotes) llegan hasta los valores más lejanos que todavía se consideran normales, y los puntos rojos son valores atípicos, es decir, alcaldías muy distintas al resto. Los puntos grises representan a cada alcaldía.
+
+## Gráfico de violín
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(data = datos, aes(x = "", y = imss)) +
+    geom_violin(fill = "#4A90E2", color = "#2C5F7A", alpha = 0.8,
+    trim = FALSE,               # No recortar las colas
+    scale = "width", width = 0.8, linewidth = 0.8) +
+    geom_boxplot( width = 0.15, fill = "white", color = "#2C5F7A", alpha = 0.9,
+    outlier.color = "#E74C3C", outlier.size = 1.5, outlier.alpha = 0.8, notch = FALSE) +
+  stat_summary(fun = median, geom = "point", shape = 21, size = 3, fill = "white",
+  color = "#2C5F7A", stroke = 1.5) +
+  geom_jitter(alpha = 0.2, color = "#34495E", size = 0.8, width = 0.05) +
+  scale_y_continuous(breaks = pretty_breaks(n = 8), labels = function(x) paste(x, "%")) +
+  labs(title = "Derechohabientes IMSS (%)", 
+  subtitle = "Ciudad de México",
+  y = "Derechohabientes (%)",
+  x = "")+
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+  
+```
+
+**¿Qué muestra?** El gráfico de violín combina el diagrama de caja con la curva de densidad. Lo ancho del violín indica cuántos datos hay en ese valor: donde es más ancho, hay más alcaldías. En el centro se ve una caja pequeña y un círculo blanco que marca la mediana.
+
+## Q-Q Plot (comparación de cuantiles)
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+
+# Q-Q Plot básico para normalidad
+ggplot(data = datos, aes(sample = imss)) +
+    stat_qq(color = "#4A90E2", size = 2, alpha = 0.7) +
+    stat_qq_line(color = "#E74C3C", linewidth = 1, linetype = "dashed") +
+    scale_x_continuous(name = "Cuantiles Teóricos (Distribución Normal)",
+    breaks = pretty_breaks(n = 6)) +
+    scale_y_continuous(name = "Cuantiles Muestrales (Derechohabientes IMSS %)",
+    breaks = pretty_breaks(n = 6),
+    labels = function(x) paste(x, "%")) +
+    labs(title = "Gráfico Q-Q para Normalidad",
+    subtitle = "Derechohabientes IMSS (%) - CDMX") +
+    theme_bw()+
+    theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+  
+
+
+```
+
+**¿Qué muestra?** El gráfico Q-Q sirve para ver si los datos se parecen a una distribución normal, la famosa forma de "campana". Si los puntos azules quedan sobre la línea roja punteada, los datos se comportan de forma normal. Si se separan, sobre todo en las orillas, quiere decir que hay valores más extremos de lo esperado o que los datos están cargados hacia un lado.
+
+# Población total
+
+En la Ciudad de México hay alcaldías de unos 150 mil habitantes y otras de casi 2 millones, por eso usamos escala logarítmica.
+
+```{r}
+#| code-fold: true
+#| fig-width: 8
+#| fig-align: center
+
+
+ggplot(datos) +
+  geom_sf(aes(fill = poblacion_total), color = "white", linewidth = 0.05) +
+  scale_fill_viridis_c(
+    name = "Población",
+    trans = "log10",
+    labels = scales::comma_format()
+  ) +
+  labs(
+    title = "Población de las Alcaldías de la Ciudad de México",
+    caption = "Fuente: INEGI - CPV 2020"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    plot.caption = element_text(size = 10),
+    legend.position = "right"
+  )
+
+```
+
+**¿Qué muestra?** Este mapa colorea cada alcaldía según el número de habitantes. Los colores oscuros (morados) indican valores bajos y los claros (amarillos) valores altos. Sirve para ver si los valores altos o bajos se concentran en alguna zona de la Ciudad de México. La escala de colores está ajustada para que se distingan tanto los lugares con poca gente como los que tienen mucha.
+
+## Histograma
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(datos) +
+  geom_histogram(aes(poblacion_total), color="black", fill = "olivedrab", bins=8) +
+  labs(
+    title = "Población",
+    x = "Población", y = "Frecuencia"
+  ) +
+  scale_x_log10(breaks = c(200000, 500000, 1000000, 2000000), labels = scales::comma_format()) +  
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13)
+  )
+
+```
+
+**¿Qué muestra?** El histograma agrupa a las alcaldías en rangos del número de habitantes; cada barra es un rango. La altura de la barra indica cuántas alcaldías caen en ese rango, así que las barras más altas muestran los valores más comunes. Si la figura se carga hacia un lado, quiere decir que hay más alcaldías con valores bajos o con valores altos. Aquí el eje de población está en escala logarítmica, que acomoda los números para poder comparar en la misma gráfica lugares con pocos y con muchos habitantes.
+
+## Gráfica de densidad
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(datos) +
+  geom_density(aes(poblacion_total), color="black", fill = "firebrick", alpha=0.6) +
+  labs(
+    title = "Distribución Población",
+    x = "Personas", y = "Densidad"
+  ) +
+  scale_x_log10(breaks = c(200000, 500000, 1000000, 2000000), labels = scales::comma_format()) + 
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13)
+  )
+
+
+```
+
+**¿Qué muestra?** La gráfica de densidad es como un histograma suavizado: en lugar de barras muestra una curva. Donde la curva está más alta es donde se concentran más alcaldías. Si tiene una sola "montaña", la mayoría tiene valores parecidos; si tiene varias, hay grupos distintos. Aquí el eje de población está en escala logarítmica, que acomoda los números para poder comparar en la misma gráfica lugares con pocos y con muchos habitantes.
+
+## Boxplot
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(data = datos, aes(x = "", y = poblacion_total)) +
+    geom_boxplot(
+    fill = "#4A90E2",           # Color de relleno
+    color = "#2C5F7A",          # Color del borde más oscuro
+    alpha = 0.8,                # Transparencia
+    outlier.color = "#E74C3C",  # Color rojo para outliers
+    outlier.size = 2.5,         # Tamaño de outliers
+    outlier.alpha = 0.7,        # Transparencia de outliers
+    width = 0.5,                # Ancho del boxplot
+    notch = TRUE,               # Muescas para intervalo de confianza
+    notchwidth = 0.7            # Ancho de las muescas
+  ) +
+  geom_jitter(alpha = 0.3, color = "#34495E", size = 1.2, width = 0.1) +
+  scale_y_log10(breaks = c(200000, 500000, 1000000, 2000000), labels = scales::comma_format()) +
+  labs(title = "Distribución Población", 
+  subtitle = "Ciudad de México",
+  y = "Personas",
+  x = "")+
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+```
+
+**¿Qué muestra?** El diagrama de caja resume los datos en pocas partes. La línea del centro de la caja es la mediana, es decir, el valor de en medio. La caja contiene a la mitad de las alcaldías del centro: mientras más alargada, más diferentes son entre sí. Las líneas que salen de la caja (bigotes) llegan hasta los valores más lejanos que todavía se consideran normales, y los puntos rojos son valores atípicos, es decir, alcaldías muy distintas al resto. Los puntos grises representan a cada alcaldía. Aquí el eje de población está en escala logarítmica, que acomoda los números para poder comparar en la misma gráfica lugares con pocos y con muchos habitantes.
+
+## Gráfico de violín
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(data = datos, aes(x = "", y = poblacion_total)) +
+    geom_violin(fill = "#4A90E2", color = "#2C5F7A", alpha = 0.8,
+    trim = FALSE,               # No recortar las colas
+    scale = "width", width = 0.8, linewidth = 0.8) +
+    geom_boxplot( width = 0.15, fill = "white", color = "#2C5F7A", alpha = 0.9,
+    outlier.color = "#E74C3C", outlier.size = 1.5, outlier.alpha = 0.8, notch = FALSE) +
+  stat_summary(fun = median, geom = "point", shape = 21, size = 3, fill = "white",
+  color = "#2C5F7A", stroke = 1.5) +
+  geom_jitter(alpha = 0.2, color = "#34495E", size = 0.8, width = 0.05) +
+  scale_y_log10(breaks = c(200000, 500000, 1000000, 2000000), labels = scales::comma_format()) +
+  labs(title = "Distribución Población", 
+  subtitle = "Ciudad de México",
+  y = "Personas",
+  x = "")+
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+  
+```
+
+**¿Qué muestra?** El gráfico de violín combina el diagrama de caja con la curva de densidad. Lo ancho del violín indica cuántos datos hay en ese valor: donde es más ancho, hay más alcaldías. En el centro se ve una caja pequeña y un círculo blanco que marca la mediana. Aquí el eje de población está en escala logarítmica, que acomoda los números para poder comparar en la misma gráfica lugares con pocos y con muchos habitantes.
+
+
+# Población de 12 años y más económicamente activa (%)
+
+```{r}
+#| code-fold: true
+#| fig-width: 8
+#| fig-align: center
+
+
+ggplot(datos) +
+  geom_sf(aes(fill = pea), color = "white", linewidth = 0.05) +
+  scale_fill_viridis_c(
+    name = "PEA"
+  ) +
+  labs(
+    title = "PEA (%) de las Alcaldías de la Ciudad de México",
+    caption = "Fuente: INEGI - CPV 2020"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    plot.caption = element_text(size = 10),
+    legend.position = "right"
+  )
+
+```
+
+**¿Qué muestra?** Este mapa colorea cada alcaldía según el porcentaje de población económicamente activa (PEA). Los colores oscuros (morados) indican valores bajos y los claros (amarillos) valores altos. Sirve para ver si los valores altos o bajos se concentran en alguna zona de la Ciudad de México. La PEA son las personas de 12 años o más que trabajan o están buscando trabajo.
+
+## Histograma
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(datos) +
+  geom_histogram(aes(pea), color="black", fill = "olivedrab", boundary=min(datos$pea, na.rm = TRUE), binwidth = 2) +
+  labs(
+    title = "PEA (%)",
+    x = "PEA (%)", y = "Frecuencia"
+  ) +
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13)
+  )
+
+```
+
+**¿Qué muestra?** El histograma agrupa a las alcaldías en rangos del porcentaje de población económicamente activa (PEA); cada barra es un rango. La altura de la barra indica cuántas alcaldías caen en ese rango, así que las barras más altas muestran los valores más comunes. Si la figura se carga hacia un lado, quiere decir que hay más alcaldías con valores bajos o con valores altos.
+
+## Gráfica de densidad
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(datos) +
+  geom_density(aes(pea), color="black", fill = "#122ABB", alpha=0.6) +
+  labs(
+    title = "PEA (%)",
+    x = "PEA (%)", y = "Densidad"
+  ) +
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13)
+  )
+
+
+```
+
+**¿Qué muestra?** La gráfica de densidad es como un histograma suavizado: en lugar de barras muestra una curva. Donde la curva está más alta es donde se concentran más alcaldías. Si tiene una sola "montaña", la mayoría tiene valores parecidos; si tiene varias, hay grupos distintos.
+
+## Boxplot
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(data = datos, aes(x = "", y = pea)) +
+    geom_boxplot(
+    fill = "#4A90E2",           # Color de relleno
+    color = "#2C5F7A",          # Color del borde más oscuro
+    alpha = 0.8,                # Transparencia
+    outlier.color = "#E74C3C",  # Color rojo para outliers
+    outlier.size = 2.5,         # Tamaño de outliers
+    outlier.alpha = 0.7,        # Transparencia de outliers
+    width = 0.5,                # Ancho del boxplot
+    notch = TRUE,               # Muescas para intervalo de confianza
+    notchwidth = 0.7            # Ancho de las muescas
+  ) +
+  geom_jitter(alpha = 0.3, color = "#34495E", size = 1.2, width = 0.1) +
+  scale_y_continuous(breaks = pretty_breaks(n = 8), labels = function(x) paste(x, "%")) +
+  labs(title = "PEA (%)", 
+  subtitle = "Ciudad de México",
+  y = "PEA (%)",
+  x = "")+
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+```
+
+**¿Qué muestra?** El diagrama de caja resume los datos en pocas partes. La línea del centro de la caja es la mediana, es decir, el valor de en medio. La caja contiene a la mitad de las alcaldías del centro: mientras más alargada, más diferentes son entre sí. Las líneas que salen de la caja (bigotes) llegan hasta los valores más lejanos que todavía se consideran normales, y los puntos rojos son valores atípicos, es decir, alcaldías muy distintas al resto. Los puntos grises representan a cada alcaldía.
+
+## Gráfico de violín
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+ggplot(data = datos, aes(x = "", y = pea)) +
+    geom_violin(fill = "#4A90E2", color = "#2C5F7A", alpha = 0.8,
+    trim = FALSE,               # No recortar las colas
+    scale = "width", width = 0.8, linewidth = 0.8) +
+    geom_boxplot( width = 0.15, fill = "white", color = "#2C5F7A", alpha = 0.9,
+    outlier.color = "#E74C3C", outlier.size = 1.5, outlier.alpha = 0.8, notch = FALSE) +
+  stat_summary(fun = median, geom = "point", shape = 21, size = 3, fill = "white",
+  color = "#2C5F7A", stroke = 1.5) +
+  geom_jitter(alpha = 0.2, color = "#34495E", size = 0.8, width = 0.05) +
+  scale_y_continuous(breaks = pretty_breaks(n = 8), labels = function(x) paste(x, "%")) +
+  labs(title = "PEA (%)", 
+  subtitle = "Ciudad de México",
+  y = "PEA (%)",
+  x = "")+
+  theme_bw()+
+  theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+  
+```
+
+**¿Qué muestra?** El gráfico de violín combina el diagrama de caja con la curva de densidad. Lo ancho del violín indica cuántos datos hay en ese valor: donde es más ancho, hay más alcaldías. En el centro se ve una caja pequeña y un círculo blanco que marca la mediana.
+
+## Q-Q Plot (comparación de cuantiles)
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+
+
+# Q-Q Plot básico para normalidad
+ggplot(data = datos, aes(sample = pea)) +
+    stat_qq(color = "#4A90E2", size = 2, alpha = 0.7) +
+    stat_qq_line(color = "#E74C3C", linewidth = 1, linetype = "dashed") +
+    scale_x_continuous(name = "Cuantiles Teóricos (Distribución Normal)",
+    breaks = pretty_breaks(n = 6)) +
+    scale_y_continuous(name = "Cuantiles Muestrales (PEA %)",
+    breaks = pretty_breaks(n = 6),
+    labels = function(x) paste(x, "%")) +
+    labs(title = "Gráfico Q-Q para Normalidad",
+    subtitle = "PEA (%) - CDMX") +
+    theme_bw()+
+    theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+  
+
+
+```
+
+**¿Qué muestra?** El gráfico Q-Q sirve para ver si los datos se parecen a una distribución normal, la famosa forma de "campana". Si los puntos azules quedan sobre la línea roja punteada, los datos se comportan de forma normal. Si se separan, sobre todo en las orillas, quiere decir que hay valores más extremos de lo esperado o que los datos están cargados hacia un lado.
+
+
+# Relación entre PEA y Derechohabientes IMSS (%)
+
+
+```{r}
+#| code-fold: true
+#| fig-width: 7
+#| fig-align: center
+#| warning: false
+#| message: false
+
+
+ggplot(datos) +
+    geom_point(aes(x = pea, y = imss), color = "#4A90E2", size = 2, alpha = 0.6) +
+    geom_smooth(aes(x = pea, y = imss), method = "lm", color = "#E74C3C", se = TRUE) +
+    labs(title = "Relación PEA (%) y Derechohabientes IMSS (%)",
+    subtitle = "Ciudad de México",
+    x = "PEA (%)", y = "Derechohabientes IMSS (%)") +
+    scale_x_continuous(breaks = pretty_breaks(n = 8), labels = function(x) paste(x, "%")) +
+    scale_y_continuous(breaks = pretty_breaks(n = 6), labels = function(x) paste(x, "%")) +
+    theme_bw()+
+    theme(
+    legend.title = element_text(size=13, face="bold"),
+    legend.text = element_text(size=13),
+    plot.title = element_text(size=15, face="bold"),
+    plot.subtitle = element_text(size=13),
+    axis.text.x=element_text(size=12),
+    axis.text.y=element_text(size=12),
+    axis.title.x = element_text(face="bold", size=13),
+    axis.title.y = element_text(face="bold", size=13),
+    panel.grid.major.y = element_line(color = "#ECF0F1", linewidth = 0.5,
+      linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+  
+
+
+```
+
+**¿Qué muestra?** Cada punto es una alcaldía: su posición hacia la derecha indica su PEA y su altura indica el porcentaje de afiliados al IMSS. La línea roja muestra la tendencia general: si sube, quiere decir que donde más gente trabaja también suele haber más afiliados al IMSS. La franja gris alrededor de la línea indica qué tan segura es esa tendencia; mientras más pegados estén los puntos a la línea, más fuerte es la relación.
