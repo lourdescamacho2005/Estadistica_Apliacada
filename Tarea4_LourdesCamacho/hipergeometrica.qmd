@@ -1,0 +1,380 @@
+---
+title: "Distribución Hipergeométrica"
+lang: es
+---
+
+```{=html}
+<style>
+main.content {
+text-align: justify}
+</style>
+```
+
+```{r}
+#| label: setup
+#| include: false
+library(tidyverse)
+library(kableExtra)
+library(gridExtra)
+```
+
+La **distribución hipergeométrica** aparece cuando se extraen objetos de un conjunto **sin reemplazo**. Se tiene un conjunto de $N$ objetos, de los cuales $K$ son de un primer tipo y $N-K$ de un segundo tipo. Si se seleccionan $n$ objetos al azar sin reemplazo, la variable $X$ cuenta cuántos objetos del primer tipo se obtuvieron.
+
+::: {#def-hipergeometrica}
+Una variable aleatoria $X$ tiene **distribución hipergeométrica** con parámetros $N$, $K$ y $n$ si su función de probabilidad está dada por:
+
+$$f(x) = \frac{\binom{K}{x}\binom{N-K}{n-x}}{\binom{N}{n}}$$
+
+para $x = 0, 1, \ldots, n$, considerando que $\binom{a}{b} = 0$ cuando $b > a$.
+
+Para denotar que $X$ tiene esta distribución escribimos $X \sim \text{hipergeo}(N, K, n)$.
+:::
+
+## Características
+
+**Parámetros**
+
+- $N$: número total de objetos ($N = 1, 2, \ldots$)
+- $K$: número de objetos del primer tipo ($K = 0, 1, \ldots, N$)
+- $n$: tamaño de la muestra ($n = 0, 1, \ldots, N$)
+
+**Parámetros Estadísticos**
+
+Esperanza (Media):
+
+$$E(X) = n\frac{K}{N}$$
+
+Varianza:
+
+$$\text{Var}(X) = n\,\frac{K}{N}\,\frac{N-K}{N}\,\frac{N-n}{N-1}$$
+
+Desviación estándar:
+
+$$\sigma = \sqrt{n\,\frac{K}{N}\,\frac{N-K}{N}\,\frac{N-n}{N-1}}$$
+
+**Función de Distribución (Probabilidad Acumulada)**
+
+$$F(x) = P(X \leq x) = \sum_{i \leq x} \frac{\binom{K}{i}\binom{N-K}{n-i}}{\binom{N}{n}}$$
+
+En R se usan las funciones `dhyper()`, `phyper()` y `rhyper()`, donde `m` es $K$, `n` es $N-K$ y `k` es $n$.
+
+## Ejemplo
+
+::: {#exm-focos}
+### Focos defectuosos
+
+Una caja tiene 20 focos, de los cuales 5 están defectuosos. Se escogen 4 focos al azar sin reemplazo. Sea $X$ el número de focos defectuosos en la muestra, entonces $X \sim \text{hipergeo}(20, 5, 4)$.
+
+```{r}
+#| label: ejemplo-focos
+#| code-fold: true
+
+N_focos <- 20
+K_focos <- 5
+n_focos <- 4
+
+x_focos <- 0:n_focos
+
+tabla_focos <- data.frame(
+  x = x_focos,
+  Probabilidad = dhyper(x_focos, K_focos, N_focos - K_focos, n_focos),
+  Acumulada = phyper(x_focos, K_focos, N_focos - K_focos, n_focos)
+)
+
+kable(tabla_focos, digits = 4,
+      caption = "Distribución hipergeo(20, 5, 4)",
+      col.names = c("x", "P(X = x)", "P(X ≤ x)")) %>%
+  kable_styling(bootstrap_options = "striped")
+
+# Parámetros estadísticos
+media_focos <- n_focos * K_focos / N_focos
+var_focos <- n_focos * (K_focos / N_focos) * ((N_focos - K_focos) / N_focos) *
+  ((N_focos - n_focos) / (N_focos - 1))
+
+cat("Media:", media_focos, "\n")
+cat("Varianza:", round(var_focos, 4), "\n")
+cat("Desviación estándar:", round(sqrt(var_focos), 4), "\n")
+```
+
+Lo más probable es que salga 1 foco defectuoso, y es muy raro que salgan los 4.
+
+```{r}
+#| label: grafico-focos
+#| code-fold: true
+#| fig-align: center
+
+ggplot(tabla_focos, aes(x = x, y = Probabilidad)) +
+  geom_col(fill = "#7B2CBF", alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = round(Probabilidad, 4)), vjust = -0.5) +
+  geom_vline(xintercept = media_focos, color = "#E6007E", linetype = "dashed", linewidth = 1) +
+  labs(title = "Distribución hipergeo(20, 5, 4)",
+       x = "Número de focos defectuosos",
+       y = "Probabilidad") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+La línea fucsia marca la media, que es 1 foco defectuoso.
+:::
+
+## Comparación: Efecto de los Parámetros
+
+### Efecto de $K$ (fijos $N = 50$ y $n = 10$)
+
+```{r}
+#| label: efecto-K
+#| code-fold: true
+#| fig-align: center
+
+N_fijo <- 50
+n_fijo <- 10
+valores_K <- c(5, 15, 25, 40)
+
+datos_K <- data.frame()
+for (K in valores_K) {
+  x <- 0:n_fijo
+  temp <- data.frame(
+    x = x,
+    probabilidad = dhyper(x, K, N_fijo - K, n_fijo),
+    K = paste("K =", K)
+  )
+  datos_K <- rbind(datos_K, temp)
+}
+datos_K$K <- factor(datos_K$K, levels = paste("K =", valores_K))
+
+ggplot(datos_K, aes(x = x, y = probabilidad, fill = K)) +
+  geom_col(alpha = 0.85, show.legend = FALSE) +
+  scale_fill_manual(values = c("#FF69B4", "#C77DFF", "#7B2CBF", "#1F2A6B")) +
+  scale_x_continuous(breaks = 0:n_fijo) +
+  facet_wrap(~K) +
+  labs(title = "Efecto de K (N = 50, n = 10)",
+       x = "x",
+       y = "Probabilidad") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+Mientras más objetos del primer tipo hay en la caja, más salen en la muestra, y la distribución se mueve a la derecha.
+
+### Efecto de $n$ (fijos $N = 50$ y $K = 20$)
+
+```{r}
+#| label: efecto-n
+#| code-fold: true
+#| fig-align: center
+
+K_fijo <- 20
+valores_n <- c(5, 10, 20, 35)
+
+datos_n <- data.frame()
+for (n in valores_n) {
+  x <- 0:n
+  temp <- data.frame(
+    x = x,
+    probabilidad = dhyper(x, K_fijo, N_fijo - K_fijo, n),
+    n = paste("n =", n)
+  )
+  datos_n <- rbind(datos_n, temp)
+}
+datos_n$n <- factor(datos_n$n, levels = paste("n =", valores_n))
+
+ggplot(datos_n, aes(x = x, y = probabilidad, fill = n)) +
+  geom_col(alpha = 0.85, show.legend = FALSE) +
+  scale_fill_manual(values = c("#FF69B4", "#E6007E", "#7B2CBF", "#1F2A6B")) +
+  facet_wrap(~n, scales = "free") +
+  labs(title = "Efecto de n (N = 50, K = 20)",
+       x = "x",
+       y = "Probabilidad") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+Al sacar más objetos, en promedio salen más del primer tipo, y la distribución se mueve a la derecha.
+
+### Efecto de $N$ (fijos $K = 10$ y $n = 10$)
+
+```{r}
+#| label: efecto-N
+#| code-fold: true
+#| fig-align: center
+
+K_fijo2 <- 10
+valores_N <- c(20, 30, 50, 100)
+
+datos_N <- data.frame()
+for (N in valores_N) {
+  x <- 0:n_fijo
+  temp <- data.frame(
+    x = x,
+    probabilidad = dhyper(x, K_fijo2, N - K_fijo2, n_fijo),
+    N = paste("N =", N)
+  )
+  datos_N <- rbind(datos_N, temp)
+}
+datos_N$N <- factor(datos_N$N, levels = paste("N =", valores_N))
+
+ggplot(datos_N, aes(x = x, y = probabilidad, fill = N)) +
+  geom_col(alpha = 0.85, show.legend = FALSE) +
+  scale_fill_manual(values = c("#FF69B4", "#E6007E", "#7B2CBF", "#1F2A6B")) +
+  scale_x_continuous(breaks = 0:n_fijo) +
+  facet_wrap(~N) +
+  labs(title = "Efecto de N (K = 10, n = 10)",
+       x = "x",
+       y = "Probabilidad") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+Si la caja es más grande pero K no cambia, los objetos del primer tipo son una parte más chica del total, así que salen menos y la distribución se mueve a la izquierda.
+
+### Media y varianza para distintos parámetros
+
+```{r}
+#| label: tabla-parametros-hiper
+#| code-fold: true
+
+combinaciones <- data.frame(
+  N = c(50, 50, 50, 50, 50, 100),
+  K = c(5, 25, 40, 20, 20, 10),
+  n = c(10, 10, 10, 5, 35, 10)
+)
+
+combinaciones$Media <- combinaciones$n * combinaciones$K / combinaciones$N
+combinaciones$Varianza <- combinaciones$n * (combinaciones$K / combinaciones$N) *
+  ((combinaciones$N - combinaciones$K) / combinaciones$N) *
+  ((combinaciones$N - combinaciones$n) / (combinaciones$N - 1))
+combinaciones$Desv_Std <- sqrt(combinaciones$Varianza)
+
+kable(combinaciones, digits = 4,
+      caption = "Media y varianza de la hipergeométrica",
+      col.names = c("N", "K", "n", "Media", "Varianza", "Desv. Estándar")) %>%
+  kable_styling(bootstrap_options = "striped")
+```
+
+La media solo depende del tamaño de la muestra y de la proporción K/N.
+
+## Simulación de Valores y Comparación con la Teórica
+
+Consideremos $X \sim \text{hipergeo}(N = 50, K = 20, n = 10)$:
+
+$$E(X) = 10 \cdot \frac{20}{50} = 4, \qquad \text{Var}(X) = 10 \cdot \frac{20}{50} \cdot \frac{30}{50} \cdot \frac{40}{49} \approx 1.9592$$
+
+```{r}
+#| label: simulacion-hiper
+#| code-fold: true
+
+set.seed(123)
+
+N_sim <- 50
+K_sim <- 20
+n_sim <- 10
+repeticiones <- 10000
+
+sim_hiper <- rhyper(repeticiones, K_sim, N_sim - K_sim, n_sim)
+
+media_teo <- n_sim * K_sim / N_sim
+var_teo <- n_sim * (K_sim / N_sim) * ((N_sim - K_sim) / N_sim) * ((N_sim - n_sim) / (N_sim - 1))
+
+comparacion <- data.frame(
+  Estadistica = c("Media", "Varianza", "Desv. Estándar"),
+  Teorica = c(media_teo, var_teo, sqrt(var_teo)),
+  Simulada = c(mean(sim_hiper), var(sim_hiper), sd(sim_hiper))
+)
+
+kable(comparacion, digits = 4,
+      caption = "hipergeo(50, 20, 10): teórica vs simulada",
+      col.names = c("Estadística", "Teórica", "Simulada")) %>%
+  kable_styling(bootstrap_options = "striped")
+```
+
+La media y la varianza de la simulación quedan muy cerca de las teóricas.
+
+```{r}
+#| label: grafico-simulacion-hiper
+#| code-fold: true
+#| fig-align: center
+
+x_sim <- 0:n_sim
+
+datos_sim <- data.frame(
+  x = rep(x_sim, 2),
+  valor = c(dhyper(x_sim, K_sim, N_sim - K_sim, n_sim),
+            as.numeric(table(factor(sim_hiper, levels = x_sim))) / repeticiones),
+  tipo = rep(c("Teórica", "Simulada"), each = length(x_sim))
+)
+
+ggplot(datos_sim, aes(x = x, y = valor, fill = tipo)) +
+  geom_col(position = "dodge", alpha = 0.85) +
+  scale_fill_manual(values = c("Teórica" = "#1F2A6B", "Simulada" = "#FF69B4")) +
+  scale_x_continuous(breaks = x_sim) +
+  labs(title = "hipergeo(50, 20, 10): teórica vs simulada",
+       x = "x",
+       y = "Probabilidad / Frecuencia",
+       fill = "") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "bottom")
+```
+
+Las barras simuladas y las teóricas son casi iguales.
+
+## Teorema Central del Límite
+
+Se generan $k = 1000$ muestras de tamaño $40$ de $X \sim \text{hipergeo}(50, 20, 10)$. Como $\mu = 4$ y $\sigma^2 \approx 1.9592$:
+
+$$\bar{X}_{40} \sim N\left(4,\ \frac{1.9592}{40}\right) = N(4,\ 0.049)$$
+
+```{r}
+#| label: tcl-hiper
+#| code-fold: true
+#| fig-align: center
+
+set.seed(123)
+
+k_muestras <- 1000
+n_muestra <- 40
+
+medias <- numeric(k_muestras)
+for (i in 1:k_muestras) {
+  medias[i] <- mean(rhyper(n_muestra, K_sim, N_sim - K_sim, n_sim))
+}
+
+var_media_teo <- var_teo / n_muestra
+
+cat("Media teórica:", media_teo, "| Media observada:", round(mean(medias), 4), "\n")
+cat("Varianza teórica:", round(var_media_teo, 4), "| Varianza observada:", round(var(medias), 4), "\n")
+
+ggplot(data.frame(medias = medias), aes(x = medias)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 25,
+                 fill = "#FFC8E4", color = "#7B2CBF") +
+  stat_function(fun = dnorm, args = list(mean = media_teo, sd = sqrt(var_media_teo)),
+                color = "#E6007E", linewidth = 1.2) +
+  labs(title = "Medias muestrales de una hipergeo(50, 20, 10)",
+       subtitle = "Curva fucsia: N(4, 0.049)",
+       x = "Media muestral",
+       y = "Densidad") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+Las medias forman una campana alrededor de 4 que se ajusta a la curva normal, así que se cumple el TCL.
+
+```{r}
+#| label: qq-hiper
+#| code-fold: true
+#| fig-align: center
+#| fig-width: 6
+#| fig-height: 5
+
+qqnorm(medias, main = "QQ-plot de las medias muestrales", pch = 20, col = "#7B2CBF")
+qqline(medias, col = "#E6007E", lwd = 2)
+```
+
+Los puntos quedan casi sobre la línea fucsia, lo que confirma que las medias se comportan como una normal.
+
+<br>
+
+Referencia:
+
+- Rincón, Luis (2014). *Introducción a la Probabilidad*. Facultad de Ciencias, UNAM. Páginas 243-247.
